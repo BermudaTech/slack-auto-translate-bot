@@ -38,8 +38,12 @@ A Slack app that automatically translates messages in channels, threads, or on d
    - `channels:read`
    - `channels:join`
    - `groups:history`
+   - `groups:read`
    - `im:history`
+   - `im:write`
+   - `im:read`
    - `mpim:history`
+   - `mpim:read`
    - `app_mentions:read`
    - `commands`
 4. Add **User Token Scopes** (for posting on behalf of users):

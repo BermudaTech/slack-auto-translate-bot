@@ -208,16 +208,32 @@ app.command('/autotranslate', async ({ command, ack, respond, client }) => {
     
     if (args[0] === 'on') {
         try {
-            // Check if bot is in the channel by trying to get channel info
+            // Check if bot is in the channel/DM/group by trying to get channel info
             await client.conversations.info({
                 channel: channel_id
             });
         } catch (error) {
-            console.log('❌ Bot not in channel:', channel_id, error.data?.error);
-            await respond({
-                text: '⚠️ Bot needs to be added to this channel first. Please invite @TranslateBot to the channel before enabling auto-translation.',
-                response_type: 'ephemeral'
-            });
+            console.log('❌ Bot not in channel/DM:', channel_id, error.data?.error);
+            
+            const isDM = channel_id.startsWith('D');
+            const isGroupDM = command.channel_name && command.channel_name.startsWith('mpdm-');
+            
+            if (isDM) {
+                await respond({
+                    text: '⚠️ Please message the bot directly first to enable DM translation.',
+                    response_type: 'ephemeral'
+                });
+            } else if (isGroupDM) {
+                await respond({
+                    text: '⚠️ Bot needs proper permissions for group DMs. Please check app permissions.',
+                    response_type: 'ephemeral'
+                });
+            } else {
+                await respond({
+                    text: '⚠️ Bot needs to be added to this channel first. Please invite @TranslateBot to the channel before enabling auto-translation.',
+                    response_type: 'ephemeral'
+                });
+            }
             return;
         }
         
@@ -240,9 +256,9 @@ app.command('/autotranslate', async ({ command, ack, respond, client }) => {
         
         console.log('✅ Translation enabled for channel:', channel_id, 'Languages:', activeLanguages);
         
-        await respond({
-            text: `✅ Auto-translation enabled for this channel. Active languages: ${activeLanguages.join(', ')}`,
-            response_type: 'ephemeral'
+        await client.chat.postMessage({
+            channel: channel_id,
+            text: `✅ Auto-translation enabled for this channel. Active languages: ${activeLanguages.join(', ')}`
         });
     } else if (args[0] === 'off') {
         channelSettings.delete(channel_id);
@@ -251,9 +267,9 @@ app.command('/autotranslate', async ({ command, ack, respond, client }) => {
         
         console.log('❌ Translation disabled for channel:', channel_id);
         
-        await respond({
-            text: '❌ Auto-translation disabled for this channel',
-            response_type: 'ephemeral'
+        await client.chat.postMessage({
+            channel: channel_id,
+            text: '❌ Auto-translation disabled for this channel'
         });
     } else {
         await respond({
