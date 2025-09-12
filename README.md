@@ -31,6 +31,8 @@ A Slack app that automatically translates messages in channels, threads, or on d
    - `chat:write`
    - `chat:write.customize`
    - `channels:history`
+   - `channels:read`
+   - `channels:join`
    - `groups:history`
    - `im:history`
    - `mpim:history`
@@ -43,6 +45,7 @@ A Slack app that automatically translates messages in channels, threads, or on d
 5. Install App to Workspace → copy both Bot User OAuth Token (`xoxb-...`) and User OAuth Token (`xoxp-...`)
 6. Under Basic Information → copy the Signing Secret
 7. Generate an App-Level Token (Socket Mode) with scope `connections:write` → copy (`xapp-...`)
+8. **Important:** After adding new scopes, reinstall the app to apply the updated permissions
 
 ---
 
@@ -103,7 +106,7 @@ The bot will connect via Socket Mode and listen for messages.
 - `/translate`: Posts translation as if you wrote it (appears with your username)
 - Auto-translation: Posts translation as a threaded reply from the bot
 - Uses 🌐 emoji to indicate it's a translation
-- Bot must be invited to channels before enabling auto-translation
+- Bot must be invited to channels before enabling auto-translation: `/invite @your-bot-name`
 
 ---
 
