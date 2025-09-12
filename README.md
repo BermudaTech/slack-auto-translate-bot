@@ -2,6 +2,10 @@
 
 A Slack app that automatically translates messages in channels, threads, or on demand. Built with Bolt for JavaScript and a translation provider (Google Translate, DeepL, OpenAI, etc.).
 
+## Watch the Bot in Action
+
+[![Watch the video](https://img.youtube.com/vi/Znr7fZwMMZk/maxresdefault.jpg)](https://youtu.be/Znr7fZwMMZk)
+
 ---
 
 ## Features
