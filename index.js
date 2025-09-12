@@ -65,6 +65,39 @@ const languageFlags = {
     'ar': '🇸🇦'
 };
 
+// Helper function to check if text contains only emojis, whitespace, or is empty
+function isEmojiOnly(text) {
+    if (!text || !text.trim()) return true;
+    
+    // Remove Slack text emojis (like :smile:, :slightly_smiling_face:)
+    let textWithoutSlackEmojis = text.replace(/:[a-zA-Z0-9_+-]+:/g, '');
+    
+    // Remove all Unicode emojis, whitespace, and common punctuation
+    const textWithoutEmojis = textWithoutSlackEmojis
+        .replace(/[\u{1F600}-\u{1F64F}]/gu, '') // Emoticons
+        .replace(/[\u{1F300}-\u{1F5FF}]/gu, '') // Misc Symbols
+        .replace(/[\u{1F680}-\u{1F6FF}]/gu, '') // Transport
+        .replace(/[\u{1F700}-\u{1F77F}]/gu, '') // Alchemical Symbols
+        .replace(/[\u{1F780}-\u{1F7FF}]/gu, '') // Geometric Shapes Extended
+        .replace(/[\u{1F800}-\u{1F8FF}]/gu, '') // Supplemental Arrows-C
+        .replace(/[\u{1F900}-\u{1F9FF}]/gu, '') // Supplemental Symbols and Pictographs
+        .replace(/[\u{1FA00}-\u{1FA6F}]/gu, '') // Chess Symbols
+        .replace(/[\u{1FA70}-\u{1FAFF}]/gu, '') // Symbols and Pictographs Extended-A
+        .replace(/[\u{2600}-\u{26FF}]/gu, '')   // Misc symbols
+        .replace(/[\u{2700}-\u{27BF}]/gu, '')   // Dingbats
+        .replace(/[\u{FE00}-\u{FE0F}]/gu, '')   // Variation Selectors
+        .replace(/[\u{1F1E0}-\u{1F1FF}]/gu, '') // Flags
+        .replace(/\s+/g, '')                    // Whitespace
+        .replace(/[.,!?;:]/g, '');              // Basic punctuation
+    
+    return textWithoutEmojis.length === 0;
+}
+
+// Helper function to normalize text for comparison
+function normalizeText(text) {
+    return text.toLowerCase().trim().replace(/\s+/g, ' ');
+}
+
 app.message(async ({ message, client }) => {
     console.log('📩 Message received:', { 
         text: message.text, 
@@ -83,6 +116,12 @@ app.message(async ({ message, client }) => {
     // Skip messages that start with our translation emoji to avoid loops
     if (message.text && (message.text.startsWith('🌐') || message.text.startsWith(':globe_with_meridians:'))) {
         console.log('⏭️ Skipping translated message to avoid loop');
+        return;
+    }
+    
+    // Skip emoji-only messages
+    if (isEmojiOnly(message.text)) {
+        console.log('⏭️ Skipping emoji-only message');
         return;
     }
     
@@ -114,6 +153,12 @@ app.message(async ({ message, client }) => {
                 message.text, 
                 targetLang
             );
+            
+            // Check if translation is the same as original text
+            if (normalizeText(result.translatedText) === normalizeText(message.text)) {
+                console.log('⏭️ Skipping identical translation');
+                return;
+            }
             
             // Get user info to display username and avatar
             const userInfo = await client.users.info({ user: message.user });
@@ -234,6 +279,15 @@ app.command('/translate', async ({ command, ack, respond, client }) => {
         return;
     }
     
+    // Skip emoji-only messages
+    if (isEmojiOnly(text)) {
+        await respond({
+            text: '⏭️ Cannot translate emoji-only messages',
+            response_type: 'ephemeral'
+        });
+        return;
+    }
+    
     try {
         // Get channel settings to determine active languages
         const settings = channelSettings.get(channel_id);
@@ -250,6 +304,7 @@ app.command('/translate', async ({ command, ack, respond, client }) => {
         
         if (targetLang) {
             const result = await translateService.translateText(text, targetLang);
+            
             try {
                 await userClient.chat.postMessage({
                     channel: channel_id,

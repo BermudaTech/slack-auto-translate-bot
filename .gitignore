@@ -3,6 +3,9 @@
 .env.local
 .env.production
 
+# publish
+publish.sh
+
 # Node modules
 node_modules/
 
