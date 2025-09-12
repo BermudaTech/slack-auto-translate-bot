@@ -108,7 +108,7 @@ app.message(async ({ message, client }) => {
         full_message: JSON.stringify(message, null, 2)
     });
     
-    if (message.subtype || message.bot_id) {
+    if (message.bot_id || (message.subtype && message.subtype !== 'file_share')) {
         console.log('⏭️ Skipping bot/system message');
         return;
     }

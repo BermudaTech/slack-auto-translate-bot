@@ -74,8 +74,8 @@ TRANSLATE_API_KEY=your-google-cloud-translate-api-key
 ## Install & Run
 
 ```bash
-git clone https://github.com/yourname/slack-translate-app.git
-cd slack-translate-app
+git clone https://github.com/BermudaTech/slack-auto-translate-bot
+cd slack-auto-translate-bot
 npm install
 npm start
 ```
