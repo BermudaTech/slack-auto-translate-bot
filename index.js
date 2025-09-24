@@ -21,33 +21,98 @@ const path = require('path');
 
 const configPath = path.join(__dirname, 'config.json');
 
-// Load channel settings from config file
-function loadChannelSettings() {
+// Load settings from config file
+function loadSettings() {
     try {
         if (fs.existsSync(configPath)) {
             const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-            return new Map(Object.entries(config.channelSettings));
+            return {
+                channelSettings: new Map(Object.entries(config.channelSettings || {})),
+                userSettings: new Map(Object.entries(config.userSettings || {}))
+            };
         }
     } catch (error) {
         console.error('Error loading config:', error);
     }
-    return new Map();
+    return {
+        channelSettings: new Map(),
+        userSettings: new Map()
+    };
 }
 
-// Save channel settings to config file
-function saveChannelSettings(channelSettings) {
+// Save settings to config file
+function saveSettings(channelSettings, userSettings) {
     try {
         const config = {
-            channelSettings: Object.fromEntries(channelSettings)
+            channelSettings: Object.fromEntries(channelSettings),
+            userSettings: Object.fromEntries(userSettings)
         };
         fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
-        console.log('💾 Channel settings saved');
+        console.log('💾 Settings saved');
     } catch (error) {
         console.error('Error saving config:', error);
     }
 }
 
-const channelSettings = loadChannelSettings();
+// Load user settings for a specific user
+function getUserSettings(userId) {
+    return userSettings.get(userId) || { enabled: false, targetLanguage: 'en' };
+}
+
+// Save user settings for a specific user
+function setUserSettings(userId, settings) {
+    userSettings.set(userId, settings);
+    saveSettings(channelSettings, userSettings);
+}
+
+// Get users who have auto-translate enabled for a channel
+function getUsersWithAutoTranslate(channelId) {
+    const usersWithAutoTranslate = [];
+    for (const [userId, settings] of userSettings) {
+        if (settings.enabled) {
+            // Check if user has channel-specific settings or global settings
+            const effectiveSettings = settings.channels?.[channelId] || settings;
+            if (effectiveSettings.enabled !== false) {
+                usersWithAutoTranslate.push({
+                    userId,
+                    targetLanguage: effectiveSettings.targetLanguage || settings.targetLanguage
+                });
+            }
+        }
+    }
+    return usersWithAutoTranslate;
+}
+
+const { channelSettings, userSettings } = loadSettings();
+
+// Simple cache for language detection to avoid redundant API calls
+const detectionCache = new Map();
+const CACHE_TTL = 60000; // 1 minute
+const MAX_CACHE_SIZE = 500;
+
+function getCachedDetection(text) {
+    const key = text.toLowerCase().trim();
+    const cached = detectionCache.get(key);
+    if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
+        return cached.language;
+    }
+    return null;
+}
+
+function setCachedDetection(text, language) {
+    const key = text.toLowerCase().trim();
+
+    // Implement simple LRU by clearing cache when it gets too large
+    if (detectionCache.size >= MAX_CACHE_SIZE) {
+        const firstKey = detectionCache.keys().next().value;
+        detectionCache.delete(firstKey);
+    }
+
+    detectionCache.set(key, {
+        language: language,
+        timestamp: Date.now()
+    });
+}
 
 // Language flag emojis
 const languageFlags = {
@@ -99,102 +164,156 @@ function normalizeText(text) {
 }
 
 app.message(async ({ message, client }) => {
-    console.log('📩 Message received:', { 
-        text: message.text, 
-        channel: message.channel, 
+    console.log('📩 Message received:', {
+        text: message.text,
+        channel: message.channel,
         user: message.user,
         subtype: message.subtype,
         bot_id: message.bot_id,
         full_message: JSON.stringify(message, null, 2)
     });
-    
+
     if (message.bot_id || (message.subtype && message.subtype !== 'file_share')) {
         console.log('⏭️ Skipping bot/system message');
         return;
     }
-    
+
     // Skip messages that start with our translation emoji to avoid loops
     if (message.text && (message.text.startsWith('🌐') || message.text.startsWith(':globe_with_meridians:'))) {
         console.log('⏭️ Skipping translated message to avoid loop');
         return;
     }
-    
+
     // Skip emoji-only messages
     if (isEmojiOnly(message.text)) {
         console.log('⏭️ Skipping emoji-only message');
         return;
     }
-    
+
     const channelId = message.channel;
     const settings = channelSettings.get(channelId);
-    
+
     console.log('⚙️ Channel settings:', settings);
-    
-    if (!settings || !settings.enabled) {
-        console.log('❌ Translation not enabled for this channel');
+
+    // Check for both channel-level and individual user auto-translate
+    const channelEnabled = settings && settings.enabled;
+    const usersWithAutoTranslate = getUsersWithAutoTranslate(channelId);
+
+    console.log('👥 Users with auto-translate:', usersWithAutoTranslate);
+    console.log('📊 Total user settings:', userSettings.size);
+    console.log('🔧 All user settings:', Object.fromEntries(userSettings));
+
+    if (!channelEnabled && usersWithAutoTranslate.length === 0) {
+        console.log('❌ Translation not enabled for this channel or any users');
         return;
     }
-    
+
     try {
-        // Detect source language first
-        const [detection] = await translateService.translate.detect(message.text);
-        const detectedLanguage = detection.language;
-        
-        console.log('🔍 Detected language:', detectedLanguage);
-        
-        // Get active languages for this channel (default to en/tr if none set)
-        const activeLanguages = settings.activeLanguages || ['en', 'tr'];
-        
-        // Find the target language (the other language that's not the detected one)
-        const targetLang = activeLanguages.find(lang => lang !== detectedLanguage);
-        
-        if (targetLang) {
-            const result = await translateService.translateText(
-                message.text, 
-                targetLang
-            );
-            
-            // Check if translation is the same as original text
-            if (normalizeText(result.translatedText) === normalizeText(message.text)) {
-                console.log('⏭️ Skipping identical translation');
-                return;
+        // Check cache first, then detect source language
+        let detectedLanguage = getCachedDetection(message.text);
+        if (!detectedLanguage) {
+            const [detection] = await translateService.translate.detect(message.text);
+            detectedLanguage = detection.language;
+            setCachedDetection(message.text, detectedLanguage);
+            console.log('🔍 Detected language (API):', detectedLanguage);
+        } else {
+            console.log('🔍 Detected language (cached):', detectedLanguage);
+        }
+
+        // Handle channel-level auto-translate (existing functionality)
+        if (channelEnabled) {
+            const activeLanguages = settings.activeLanguages || ['en', 'tr'];
+            const targetLang = activeLanguages.find(lang => lang !== detectedLanguage);
+
+            if (targetLang) {
+                const result = await translateService.translateText(message.text, targetLang);
+
+                if (normalizeText(result.translatedText) !== normalizeText(message.text)) {
+                    const userInfo = await client.users.info({ user: message.user });
+                    const username = userInfo.user.name;
+                    const userAvatar = userInfo.user.profile.image_24;
+
+                    await client.chat.postMessage({
+                        channel: channelId,
+                        thread_ts: message.ts,
+                        blocks: [
+                            {
+                                type: "context",
+                                elements: [
+                                    {
+                                        type: "image",
+                                        image_url: userAvatar,
+                                        alt_text: username
+                                    },
+                                    {
+                                        type: "mrkdwn",
+                                        text: `${username} :globe_with_meridians: ${result.translatedText}`
+                                    }
+                                ]
+                            }
+                        ]
+                    });
+                }
             }
-            
-            // Get user info to display username and avatar
+        }
+
+        // Handle individual user auto-translate (new functionality)
+        if (usersWithAutoTranslate.length > 0) {
+            const translationPromises = [];
             const userInfo = await client.users.info({ user: message.user });
             const username = userInfo.user.name;
-            const userAvatar = userInfo.user.profile.image_24;
-            
+
+            for (const userConfig of usersWithAutoTranslate) {
+                // Skip if user is the message sender
+                if (userConfig.userId === message.user) {
+                    console.log(`⏭️ Skipping translation for message sender ${userConfig.userId}`);
+                    continue;
+                }
+
+                // Skip if target language is same as detected language
+                if (userConfig.targetLanguage === detectedLanguage) {
+                    console.log(`⏭️ Skipping translation for ${userConfig.userId} - target language ${userConfig.targetLanguage} matches detected ${detectedLanguage}`);
+                    continue;
+                }
+
+                // Create translation promise
+                translationPromises.push(
+                    translateService.translateText(message.text, userConfig.targetLanguage)
+                        .then(async (result) => {
+                            // Check if translation is meaningful
+                            if (normalizeText(result.translatedText) === normalizeText(message.text)) {
+                                return;
+                            }
+
+                            // Send ephemeral message to the specific user
+                            const flagEmoji = languageFlags[userConfig.targetLanguage] || '🌐';
+                            await client.chat.postEphemeral({
+                                channel: channelId,
+                                user: userConfig.userId,
+                                text: `${flagEmoji} *${username}*: ${result.translatedText}`
+                            });
+                        })
+                        .catch(error => {
+                            console.error(`Translation failed for user ${userConfig.userId}:`, error);
+                        })
+                );
+            }
+
+            // Execute all translations in parallel
+            await Promise.all(translationPromises);
+        }
+
+    } catch (error) {
+        console.error('Translation failed:', error);
+
+        // Only show error in channel if channel-level translation is enabled
+        if (channelEnabled) {
             await client.chat.postMessage({
                 channel: channelId,
                 thread_ts: message.ts,
-                blocks: [
-                    {
-                        type: "context",
-                        elements: [
-                            {
-                                type: "image",
-                                image_url: userAvatar,
-                                alt_text: username
-                            },
-                            {
-                                type: "mrkdwn",
-                                text: `${username} :globe_with_meridians: ${result.translatedText}`
-                            }
-                        ]
-                    }
-                ]
+                text: '⚠️ Translation failed. Please try again later.'
             });
         }
-        
-    } catch (error) {
-        console.error('Translation failed:', error);
-        
-        await client.chat.postMessage({
-            channel: channelId,
-            thread_ts: message.ts,
-            text: '⚠️ Translation failed. Please try again later.'
-        });
     }
 });
 
@@ -252,7 +371,7 @@ app.command('/autotranslate', async ({ command, ack, respond, client }) => {
             activeLanguages: activeLanguages
         });
         
-        saveChannelSettings(channelSettings);
+        saveSettings(channelSettings, userSettings);
         
         console.log('✅ Translation enabled for channel:', channel_id, 'Languages:', activeLanguages);
         
@@ -263,7 +382,7 @@ app.command('/autotranslate', async ({ command, ack, respond, client }) => {
     } else if (args[0] === 'off') {
         channelSettings.delete(channel_id);
         
-        saveChannelSettings(channelSettings);
+        saveSettings(channelSettings, userSettings);
         
         console.log('❌ Translation disabled for channel:', channel_id);
         
@@ -351,6 +470,84 @@ app.command('/translate', async ({ command, ack, respond, client }) => {
     }
 });
 
+// New slash command for personal auto-translate settings
+app.command('/autotranslate-me', async ({ command, ack, respond, client }) => {
+    await ack();
+
+    console.log('👤 Personal auto-translate command received:', command);
+
+    const { user_id, text } = command;
+    const args = text.trim().split(' ');
+
+    if (args[0] === 'on') {
+        let targetLanguage = 'en'; // default
+
+        if (args.length > 1) {
+            targetLanguage = translateService.getLanguageCode(args[1]);
+        }
+
+        // Get current user settings
+        const currentSettings = getUserSettings(user_id);
+
+        // Update settings
+        const newSettings = {
+            ...currentSettings,
+            enabled: true,
+            targetLanguage: targetLanguage
+        };
+        setUserSettings(user_id, newSettings);
+
+        console.log(`✅ Personal auto-translate enabled for user ${user_id} to language: ${targetLanguage}`);
+        console.log('📋 Updated user settings:', newSettings);
+        console.log('🗂️ All user settings after update:', Object.fromEntries(userSettings));
+
+        await respond({
+            text: `✅ Personal auto-translate enabled! You'll now receive translations to *${targetLanguage}* for messages in all channels (visible only to you).\n\nTo disable: \`/autotranslate-me off\`\nTo change language: \`/autotranslate-me on [language]\``,
+            response_type: 'ephemeral'
+        });
+    } else if (args[0] === 'off') {
+        const currentSettings = getUserSettings(user_id);
+
+        setUserSettings(user_id, {
+            ...currentSettings,
+            enabled: false
+        });
+
+        console.log(`❌ Personal auto-translate disabled for user ${user_id}`);
+
+        await respond({
+            text: '❌ Personal auto-translate disabled. You will no longer receive individual translations.',
+            response_type: 'ephemeral'
+        });
+    } else if (args[0] === 'status') {
+        const settings = getUserSettings(user_id);
+
+        if (settings.enabled) {
+            await respond({
+                text: `📊 *Your Personal Auto-Translate Status:*\n• Status: ✅ *Enabled*\n• Target Language: *${settings.targetLanguage}*\n• You receive private translations for messages not in your target language.\n\nCommands:\n• \`/autotranslate-me off\` - Disable\n• \`/autotranslate-me on [language]\` - Change language`,
+                response_type: 'ephemeral'
+            });
+        } else {
+            await respond({
+                text: `📊 *Your Personal Auto-Translate Status:*\n• Status: ❌ *Disabled*\n\nTo enable: \`/autotranslate-me on [language]\`\nExample: \`/autotranslate-me on spanish\``,
+                response_type: 'ephemeral'
+            });
+        }
+    } else {
+        await respond({
+            text: `*Personal Auto-Translate Commands:*\n\n• \`/autotranslate-me on [language]\` - Enable personal auto-translate\n  Example: \`/autotranslate-me on spanish\`\n  Default: \`/autotranslate-me on\` (English)\n\n• \`/autotranslate-me off\` - Disable personal auto-translate\n\n• \`/autotranslate-me status\` - Check your current settings\n\n*Available languages:*\n${Object.entries(languageFlags).map(([code, flag]) => {
+                const langNames = {
+                    'en': 'English', 'es': 'Spanish', 'fr': 'French', 'de': 'German',
+                    'it': 'Italian', 'pt': 'Portuguese', 'ru': 'Russian', 'ja': 'Japanese',
+                    'ko': 'Korean', 'zh': 'Chinese', 'ar': 'Arabic', 'tr': 'Turkish'
+                };
+                return `${flag} ${langNames[code]} (\`${code}\`)`;
+            }).join(', ')}\n\n_Note: Personal translations are private - only you can see them!_`,
+            response_type: 'ephemeral'
+        });
+    }
+});
+
 app.error((error) => {
     console.error('Slack app error:', error);
 });
@@ -360,11 +557,18 @@ app.error((error) => {
         await app.start();
         console.log('⚡️ Slack Translation Bot is running!');
         console.log('Listening for messages and slash commands...');
-        console.log('📋 Loaded channel settings:', channelSettings.size, 'channels configured');
-        
+        console.log('📋 Loaded settings:');
+        console.log(`  - Channel settings: ${channelSettings.size} channels configured`);
+        console.log(`  - User settings: ${userSettings.size} users configured`);
+
         // Log existing channel configurations
         for (const [channelId, settings] of channelSettings) {
             console.log(`  - Channel ${channelId}: ${settings.enabled ? 'ON' : 'OFF'}, languages: ${(settings.activeLanguages || ['en', 'tr']).join(', ')}`);
+        }
+
+        // Log user configurations
+        for (const [userId, settings] of userSettings) {
+            console.log(`  - User ${userId}: ${settings.enabled ? 'ON' : 'OFF'}, target: ${settings.targetLanguage}`);
         }
     } catch (error) {
         console.error('Failed to start app:', error);
