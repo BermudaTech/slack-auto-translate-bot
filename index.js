@@ -114,21 +114,26 @@ function setCachedDetection(text, language) {
     });
 }
 
-// Language flag emojis
-const languageFlags = {
-    'en': '🇺🇸',
-    'tr': '🇹🇷',
-    'es': '🇪🇸',
-    'fr': '🇫🇷',
-    'de': '🇩🇪',
-    'it': '🇮🇹',
-    'pt': '🇵🇹',
-    'ru': '🇷🇺',
-    'ja': '🇯🇵',
-    'ko': '🇰🇷',
-    'zh': '🇨🇳',
-    'ar': '🇸🇦'
+// Language configuration
+const LANGUAGES = {
+    'en': { name: 'English', flag: '🇺🇸' },
+    'tr': { name: 'Turkish', flag: '🇹🇷' },
+    'es': { name: 'Spanish', flag: '🇪🇸' },
+    'fr': { name: 'French', flag: '🇫🇷' },
+    'de': { name: 'German', flag: '🇩🇪' },
+    'it': { name: 'Italian', flag: '🇮🇹' },
+    'pt': { name: 'Portuguese', flag: '🇵🇹' },
+    'ru': { name: 'Russian', flag: '🇷🇺' },
+    'ja': { name: 'Japanese', flag: '🇯🇵' },
+    'ko': { name: 'Korean', flag: '🇰🇷' },
+    'zh': { name: 'Chinese', flag: '🇨🇳' },
+    'ar': { name: 'Arabic', flag: '🇸🇦' }
 };
+
+// Language flag emojis (for backward compatibility)
+const languageFlags = Object.fromEntries(
+    Object.entries(LANGUAGES).map(([code, { flag }]) => [code, flag])
+);
 
 // Helper function to check if text contains only emojis, whitespace, or is empty
 function isEmojiOnly(text) {
@@ -276,6 +281,12 @@ app.message(async ({ message, client }) => {
                     continue;
                 }
 
+                // Skip if channel auto-translate already covers this user's target language
+                if (channelEnabled && settings.activeLanguages && settings.activeLanguages.includes(userConfig.targetLanguage)) {
+                    console.log(`⏭️ Skipping private translation for ${userConfig.userId} - channel already supports ${userConfig.targetLanguage} (${settings.activeLanguages.join(', ')})`);
+                    continue;
+                }
+
                 // Create translation promise
                 translationPromises.push(
                     translateService.translateText(message.text, userConfig.targetLanguage)
@@ -285,12 +296,28 @@ app.message(async ({ message, client }) => {
                                 return;
                             }
 
-                            // Send ephemeral message to the specific user
+                            // Send private DM to the specific user
                             const flagEmoji = languageFlags[userConfig.targetLanguage] || '🌐';
-                            await client.chat.postEphemeral({
-                                channel: channelId,
-                                user: userConfig.userId,
-                                text: `${flagEmoji} *${username}*: ${result.translatedText}`
+
+                            // Get channel info for context
+                            const channelInfo = await client.conversations.info({ channel: channelId });
+                            const channelName = channelInfo.channel.name ? `#${channelInfo.channel.name}` : 'DM';
+
+                            // Get or create DM channel with the user
+                            const dmChannel = await client.conversations.open({
+                                users: userConfig.userId
+                            });
+
+                            // Build context message with thread info if applicable
+                            let contextText = `🔒 *Translation* from ${channelName}`;
+                            if (message.thread_ts) {
+                                contextText += ` (in thread)`;
+                            }
+                            contextText += `\n${flagEmoji} *${username}*: ${result.translatedText}`;
+
+                            await client.chat.postMessage({
+                                channel: dmChannel.channel.id,
+                                text: contextText
                             });
                         })
                         .catch(error => {
@@ -479,11 +506,29 @@ app.command('/autotranslate-me', async ({ command, ack, respond, client }) => {
     const { user_id, text } = command;
     const args = text.trim().split(' ');
 
+    console.log('📝 Command arguments:', { text: text, args: args, argsLength: args.length });
+
     if (args[0] === 'on') {
         let targetLanguage = 'en'; // default
 
         if (args.length > 1) {
-            targetLanguage = translateService.getLanguageCode(args[1]);
+            const inputLanguage = args[1].toLowerCase();
+            targetLanguage = translateService.getLanguageCode(inputLanguage);
+
+            console.log('🌍 Language processing:', { input: inputLanguage, resolved: targetLanguage });
+
+            // Validate that we got a proper language code (2-letter code)
+            const validLanguageCodes = Object.keys(LANGUAGES);
+            if (!validLanguageCodes.includes(targetLanguage)) {
+                await respond({
+                    text: `❌ Invalid language: "${args[1]}"\n\n*Valid languages:*\n${validLanguageCodes.map(code => {
+                        const languageName = LANGUAGES[code].name;
+                        return `• ${languageName} (\`${code}\` or \`${languageName.toLowerCase()}\`)`;
+                    }).join('\n')}`,
+                    response_type: 'ephemeral'
+                });
+                return;
+            }
         }
 
         // Get current user settings
@@ -501,8 +546,12 @@ app.command('/autotranslate-me', async ({ command, ack, respond, client }) => {
         console.log('📋 Updated user settings:', newSettings);
         console.log('🗂️ All user settings after update:', Object.fromEntries(userSettings));
 
+        // Get language name and flag for display
+        const flagEmoji = languageFlags[targetLanguage] || '🌐';
+        const languageName = LANGUAGES[targetLanguage]?.name || targetLanguage;
+
         await respond({
-            text: `✅ Personal auto-translate enabled! You'll now receive translations to *${targetLanguage}* for messages in all channels (visible only to you).\n\nTo disable: \`/autotranslate-me off\`\nTo change language: \`/autotranslate-me on [language]\``,
+            text: `✅ Personal auto-translate enabled! You'll now receive translations to ${flagEmoji} *${languageName}* for messages in all channels (visible only to you).\n\nTo disable: \`/autotranslate-me off\`\nTo change language: \`/autotranslate-me on [language]\``,
             response_type: 'ephemeral'
         });
     } else if (args[0] === 'off') {
@@ -523,26 +572,26 @@ app.command('/autotranslate-me', async ({ command, ack, respond, client }) => {
         const settings = getUserSettings(user_id);
 
         if (settings.enabled) {
+            // Get language name and flag for display
+            const flagEmoji = languageFlags[settings.targetLanguage] || '🌐';
+            const languageName = LANGUAGES[settings.targetLanguage]?.name || settings.targetLanguage;
+
             await respond({
-                text: `📊 *Your Personal Auto-Translate Status:*\n• Status: ✅ *Enabled*\n• Target Language: *${settings.targetLanguage}*\n• You receive private translations for messages not in your target language.\n\nCommands:\n• \`/autotranslate-me off\` - Disable\n• \`/autotranslate-me on [language]\` - Change language`,
+                text: `📊 *Your Personal Auto-Translate Status:*\n• Status: ✅ *Enabled*\n• Target Language: ${flagEmoji} *${languageName}*\n• You receive private DM translations for messages not in your target language\n• Translations are sent privately - only you can see them\n• No duplicates if channel already supports your language\n\nCommands:\n• \`/autotranslate-me off\` - Disable\n• \`/autotranslate-me on [language]\` - Change language`,
                 response_type: 'ephemeral'
             });
         } else {
             await respond({
-                text: `📊 *Your Personal Auto-Translate Status:*\n• Status: ❌ *Disabled*\n\nTo enable: \`/autotranslate-me on [language]\`\nExample: \`/autotranslate-me on spanish\``,
+                text: `📊 *Your Personal Auto-Translate Status:*\n• Status: ❌ *Disabled*\n\nTo enable: \`/autotranslate-me on [language]\`\nExamples: \`/autotranslate-me on spanish\` or \`/autotranslate-me on es\``,
                 response_type: 'ephemeral'
             });
         }
     } else {
         await respond({
-            text: `*Personal Auto-Translate Commands:*\n\n• \`/autotranslate-me on [language]\` - Enable personal auto-translate\n  Example: \`/autotranslate-me on spanish\`\n  Default: \`/autotranslate-me on\` (English)\n\n• \`/autotranslate-me off\` - Disable personal auto-translate\n\n• \`/autotranslate-me status\` - Check your current settings\n\n*Available languages:*\n${Object.entries(languageFlags).map(([code, flag]) => {
-                const langNames = {
-                    'en': 'English', 'es': 'Spanish', 'fr': 'French', 'de': 'German',
-                    'it': 'Italian', 'pt': 'Portuguese', 'ru': 'Russian', 'ja': 'Japanese',
-                    'ko': 'Korean', 'zh': 'Chinese', 'ar': 'Arabic', 'tr': 'Turkish'
-                };
-                return `${flag} ${langNames[code]} (\`${code}\`)`;
-            }).join(', ')}\n\n_Note: Personal translations are private - only you can see them!_`,
+            text: `*Personal Auto-Translate Commands:*\n\n• \`/autotranslate-me on [language]\` - Enable personal auto-translate\n  Examples: \`/autotranslate-me on spanish\` or \`/autotranslate-me on es\`\n  Default: \`/autotranslate-me on\` (English)\n\n• \`/autotranslate-me off\` - Disable personal auto-translate\n\n• \`/autotranslate-me status\` - Check your current settings\n\n*Available languages:*\n${Object.entries(languageFlags).map(([code, flag]) => {
+                const languageName = LANGUAGES[code].name;
+                return `${flag} ${languageName} (\`${code}\` or \`${languageName.toLowerCase()}\`)`;
+            }).join(', ')}\n\n_Note: Personal translations are sent as private DMs - only you can see them! No duplicates if channel already supports your target language._`,
             response_type: 'ephemeral'
         });
     }

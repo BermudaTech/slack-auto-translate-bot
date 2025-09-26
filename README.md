@@ -370,8 +370,8 @@ npm test       # Run tests (when available)
 - ✅ ~~Support per-user preferences~~ **COMPLETED**
 - ✅ ~~Ephemeral translations (private)~~ **COMPLETED**
 - ✅ ~~Performance optimizations~~ **COMPLETED**
+- 🔄 Thread/channel summary with translation
 - 🔄 Admin UI in Slack Home tab
-- 🔄 Multi-language translation in one go
 - 🔄 Glossary / custom dictionary support
 - 🔄 Translation quality feedback
 - 🔄 Usage analytics and reporting
