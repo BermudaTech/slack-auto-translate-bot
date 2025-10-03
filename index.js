@@ -296,28 +296,14 @@ app.message(async ({ message, client }) => {
                                 return;
                             }
 
-                            // Send private DM to the specific user
+                            // Send ephemeral message to the specific user in the channel
                             const flagEmoji = languageFlags[userConfig.targetLanguage] || '🌐';
 
-                            // Get channel info for context
-                            const channelInfo = await client.conversations.info({ channel: channelId });
-                            const channelName = channelInfo.channel.name ? `#${channelInfo.channel.name}` : 'DM';
-
-                            // Get or create DM channel with the user
-                            const dmChannel = await client.conversations.open({
-                                users: userConfig.userId
-                            });
-
-                            // Build context message with thread info if applicable
-                            let contextText = `🔒 *Translation* from ${channelName}`;
-                            if (message.thread_ts) {
-                                contextText += ` (in thread)`;
-                            }
-                            contextText += `\n${flagEmoji} *${username}*: ${result.translatedText}`;
-
-                            await client.chat.postMessage({
-                                channel: dmChannel.channel.id,
-                                text: contextText
+                            await client.chat.postEphemeral({
+                                channel: channelId,
+                                user: userConfig.userId,
+                                thread_ts: message.thread_ts || message.ts,
+                                text: `🔒 ${flagEmoji} *Translation for you:* ${result.translatedText}`
                             });
                         })
                         .catch(error => {
@@ -551,7 +537,7 @@ app.command('/autotranslate-me', async ({ command, ack, respond, client }) => {
         const languageName = LANGUAGES[targetLanguage]?.name || targetLanguage;
 
         await respond({
-            text: `✅ Personal auto-translate enabled! You'll now receive translations to ${flagEmoji} *${languageName}* for messages in all channels (visible only to you).\n\nTo disable: \`/autotranslate-me off\`\nTo change language: \`/autotranslate-me on [language]\``,
+            text: `✅ Personal auto-translate enabled! You'll now receive translations to ${flagEmoji} *${languageName}* as ephemeral messages in the channel/thread (visible only to you).\n\nTo disable: \`/autotranslate-me off\`\nTo change language: \`/autotranslate-me on [language]\``,
             response_type: 'ephemeral'
         });
     } else if (args[0] === 'off') {
@@ -577,7 +563,7 @@ app.command('/autotranslate-me', async ({ command, ack, respond, client }) => {
             const languageName = LANGUAGES[settings.targetLanguage]?.name || settings.targetLanguage;
 
             await respond({
-                text: `📊 *Your Personal Auto-Translate Status:*\n• Status: ✅ *Enabled*\n• Target Language: ${flagEmoji} *${languageName}*\n• You receive private DM translations for messages not in your target language\n• Translations are sent privately - only you can see them\n• No duplicates if channel already supports your language\n\nCommands:\n• \`/autotranslate-me off\` - Disable\n• \`/autotranslate-me on [language]\` - Change language`,
+                text: `📊 *Your Personal Auto-Translate Status:*\n• Status: ✅ *Enabled*\n• Target Language: ${flagEmoji} *${languageName}*\n• You receive ephemeral translations in the channel/thread context\n• Translations are visible only to you\n• No duplicates if channel already supports your language\n\nCommands:\n• \`/autotranslate-me off\` - Disable\n• \`/autotranslate-me on [language]\` - Change language`,
                 response_type: 'ephemeral'
             });
         } else {
@@ -591,7 +577,7 @@ app.command('/autotranslate-me', async ({ command, ack, respond, client }) => {
             text: `*Personal Auto-Translate Commands:*\n\n• \`/autotranslate-me on [language]\` - Enable personal auto-translate\n  Examples: \`/autotranslate-me on spanish\` or \`/autotranslate-me on es\`\n  Default: \`/autotranslate-me on\` (English)\n\n• \`/autotranslate-me off\` - Disable personal auto-translate\n\n• \`/autotranslate-me status\` - Check your current settings\n\n*Available languages:*\n${Object.entries(languageFlags).map(([code, flag]) => {
                 const languageName = LANGUAGES[code].name;
                 return `${flag} ${languageName} (\`${code}\` or \`${languageName.toLowerCase()}\`)`;
-            }).join(', ')}\n\n_Note: Personal translations are sent as private DMs - only you can see them! No duplicates if channel already supports your target language._`,
+            }).join(', ')}\n\n_Note: Personal translations appear as ephemeral messages in the channel/thread - only you can see them! No duplicates if channel already supports your target language._`,
             response_type: 'ephemeral'
         });
     }
