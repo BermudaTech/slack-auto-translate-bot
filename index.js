@@ -228,7 +228,8 @@ app.message(async ({ message, client }) => {
         // Handle channel-level auto-translate (existing functionality)
         if (channelEnabled) {
             const activeLanguages = settings.activeLanguages || ['en', 'tr'];
-            const targetLang = activeLanguages.find(lang => lang !== detectedLanguage);
+            const validLanguageCodes = Object.keys(LANGUAGES);
+            const targetLang = activeLanguages.find(lang => lang !== detectedLanguage && validLanguageCodes.includes(lang));
 
             if (targetLang) {
                 const result = await translateService.translateText(message.text, targetLang);
@@ -273,6 +274,13 @@ app.message(async ({ message, client }) => {
                 // Skip if user is the message sender
                 if (userConfig.userId === message.user) {
                     console.log(`⏭️ Skipping translation for message sender ${userConfig.userId}`);
+                    continue;
+                }
+
+                // Skip if target language is invalid
+                const validLanguageCodes = Object.keys(LANGUAGES);
+                if (!validLanguageCodes.includes(userConfig.targetLanguage)) {
+                    console.log(`⚠️ Skipping translation for ${userConfig.userId} - invalid target language: ${userConfig.targetLanguage}`);
                     continue;
                 }
 
@@ -371,16 +379,37 @@ app.command('/autotranslate', async ({ command, ack, respond, client }) => {
         }
         
         let activeLanguages;
-        
+        const validLanguageCodes = Object.keys(LANGUAGES);
+
         if (args.length > 1) {
             // Parse multiple languages: /autotranslate on english turkish spanish
-            activeLanguages = args.slice(1).map(lang => translateService.getLanguageCode(lang));
+            activeLanguages = args.slice(1)
+                .map(lang => translateService.getLanguageCode(lang.toLowerCase()))
+                .filter(code => {
+                    if (!validLanguageCodes.includes(code)) {
+                        console.log(`⚠️ Invalid language code '${code}' - skipping`);
+                        return false;
+                    }
+                    return true;
+                });
+
+            // If no valid languages provided, show error
+            if (activeLanguages.length === 0) {
+                await respond({
+                    text: `❌ No valid languages provided.\n\n*Valid languages:*\n${validLanguageCodes.map(code => {
+                        const languageName = LANGUAGES[code].name;
+                        return `• ${languageName} (\`${code}\` or \`${languageName.toLowerCase()}\`)`;
+                    }).join('\n')}`,
+                    response_type: 'ephemeral'
+                });
+                return;
+            }
         } else {
             // Default to English and Turkish
             activeLanguages = ['en', 'tr'];
         }
-        
-        channelSettings.set(channel_id, { 
+
+        channelSettings.set(channel_id, {
             enabled: true, 
             activeLanguages: activeLanguages
         });

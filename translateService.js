@@ -9,10 +9,15 @@ class TranslateService {
 
     async translateText(text, targetLanguage, sourceLanguage = null) {
         try {
-            const [translation] = await this.translate.translate(text, {
-                from: sourceLanguage,
-                to: targetLanguage
-            });
+            console.log('🔤 Translation request:', { text: text?.substring(0, 50), targetLanguage, sourceLanguage });
+
+            // Build options object - only include 'from' if sourceLanguage is specified
+            const options = { to: targetLanguage };
+            if (sourceLanguage) {
+                options.from = sourceLanguage;
+            }
+
+            const [translation] = await this.translate.translate(text, options);
 
             const [detection] = await this.translate.detect(text);
             const detectedLanguage = detection.language;
