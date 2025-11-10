@@ -241,6 +241,7 @@ app.message(async ({ message, client }) => {
                     await client.chat.postMessage({
                         channel: channelId,
                         thread_ts: message.ts,
+                        text: `${username}: ${result.translatedText}`,
                         blocks: [
                             {
                                 type: "context",

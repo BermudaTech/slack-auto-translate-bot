@@ -3,8 +3,7 @@ const { Translate } = require('@google-cloud/translate').v2;
 class TranslateService {
     constructor(apiKey) {
         this.translate = new Translate({
-            key: apiKey,
-            projectId: 'slack-translate-app'
+            key: apiKey
         });
     }
 
@@ -24,8 +23,15 @@ class TranslateService {
                 targetLanguage: targetLanguage
             };
         } catch (error) {
-            console.error('Translation error:', error);
-            throw new Error('Translation failed');
+            console.error('Translation error details:', {
+                message: error.message,
+                code: error.code,
+                status: error.status,
+                statusText: error.statusText,
+                errors: error.errors,
+                response: error.response?.data
+            });
+            throw new Error(`Translation failed: ${error.message || 'Unknown error'}`);
         }
     }
 
