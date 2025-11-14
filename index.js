@@ -317,6 +317,16 @@ app.message(async ({ message, client }) => {
                         })
                         .catch(error => {
                             console.error(`Translation failed for user ${userConfig.userId}:`, error);
+
+                            // Auto-cleanup: If user is not in channel, remove their config
+                            if (error.data?.error === 'user_not_in_channel') {
+                                const settings = getUserSettings(userConfig.userId);
+                                if (settings.channels && settings.channels[channelId]) {
+                                    delete settings.channels[channelId];
+                                    setUserSettings(userConfig.userId, settings);
+                                    console.log(`🧹 Auto-removed stale config for user ${userConfig.userId} in channel ${channelId}`);
+                                }
+                            }
                         })
                 );
             }
@@ -640,6 +650,25 @@ app.error((error) => {
         process.exit(1);
     }
 })();
+
+// Handle member leaving channel - cleanup stale auto-translate configs
+app.event('member_left_channel', async ({ event, client }) => {
+    const { user, channel } = event;
+    console.log(`👋 User ${user} left channel ${channel}`);
+
+    try {
+        const settings = getUserSettings(user);
+
+        // Check if user has channel-specific settings
+        if (settings.channels && settings.channels[channel]) {
+            delete settings.channels[channel];
+            setUserSettings(user, settings);
+            console.log(`🧹 Cleaned up auto-translate settings for user ${user} in channel ${channel}`);
+        }
+    } catch (error) {
+        console.error(`Failed to cleanup settings for user ${user} leaving channel ${channel}:`, error);
+    }
+});
 
 // Add event logging
 app.event('message', async ({ event, client }) => {

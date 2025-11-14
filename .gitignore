@@ -89,3 +89,4 @@ Thumbs.db
 
 # Config file (contains sensitive channel settings)
 config.json
+*.local

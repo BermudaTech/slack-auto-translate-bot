@@ -4,7 +4,9 @@
       "Bash(npm install)",
       "Bash(npm start)",
       "Bash(node:*)",
-      "Bash(npm audit:*)"
+      "Bash(npm audit:*)",
+      "Bash(curl:*)",
+      "Bash(scp:*)"
     ],
     "deny": [],
     "ask": []
