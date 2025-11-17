@@ -70,7 +70,12 @@ function getUsersWithAutoTranslate(channelId) {
     const usersWithAutoTranslate = [];
     for (const [userId, settings] of userSettings) {
         if (settings.enabled) {
-            // Check if user has channel-specific settings or global settings
+            // Check if channel is explicitly disabled
+            if (settings.channels?.[channelId]?.enabled === false) {
+                continue; // Skip this user for this channel
+            }
+
+            // Check if user has channel-specific settings or use global settings
             const effectiveSettings = settings.channels?.[channelId] || settings;
             if (effectiveSettings.enabled !== false) {
                 usersWithAutoTranslate.push({
@@ -321,10 +326,21 @@ app.message(async ({ message, client }) => {
                             // Auto-cleanup: If user is not in channel, remove their config
                             if (error.data?.error === 'user_not_in_channel') {
                                 const settings = getUserSettings(userConfig.userId);
+
+                                // If user has channel-specific settings, delete that channel
                                 if (settings.channels && settings.channels[channelId]) {
                                     delete settings.channels[channelId];
                                     setUserSettings(userConfig.userId, settings);
-                                    console.log(`🧹 Auto-removed stale config for user ${userConfig.userId} in channel ${channelId}`);
+                                    console.log(`🧹 Auto-removed channel-specific config for user ${userConfig.userId} in channel ${channelId}`);
+                                }
+                                // If user has global auto-translate enabled, disable for this specific channel
+                                else if (settings.enabled) {
+                                    if (!settings.channels) {
+                                        settings.channels = {};
+                                    }
+                                    settings.channels[channelId] = { enabled: false };
+                                    setUserSettings(userConfig.userId, settings);
+                                    console.log(`🧹 Auto-disabled channel ${channelId} for user ${userConfig.userId} (has global auto-translate)`);
                                 }
                             }
                         })
@@ -659,11 +675,23 @@ app.event('member_left_channel', async ({ event, client }) => {
     try {
         const settings = getUserSettings(user);
 
-        // Check if user has channel-specific settings
-        if (settings.channels && settings.channels[channel]) {
-            delete settings.channels[channel];
-            setUserSettings(user, settings);
-            console.log(`🧹 Cleaned up auto-translate settings for user ${user} in channel ${channel}`);
+        // Only process if user has auto-translate enabled
+        if (settings.enabled) {
+            // If user has channel-specific settings for this channel, delete them
+            if (settings.channels && settings.channels[channel]) {
+                delete settings.channels[channel];
+                setUserSettings(user, settings);
+                console.log(`🧹 Removed channel-specific settings for user ${user} in channel ${channel}`);
+            }
+            // If user has global auto-translate, disable for this specific channel
+            else {
+                if (!settings.channels) {
+                    settings.channels = {};
+                }
+                settings.channels[channel] = { enabled: false };
+                setUserSettings(user, settings);
+                console.log(`🧹 Disabled channel ${channel} for user ${user} (has global auto-translate)`);
+            }
         }
     } catch (error) {
         console.error(`Failed to cleanup settings for user ${user} leaving channel ${channel}:`, error);

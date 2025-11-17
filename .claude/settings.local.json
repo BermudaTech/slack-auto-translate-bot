@@ -6,7 +6,8 @@
       "Bash(node:*)",
       "Bash(npm audit:*)",
       "Bash(curl:*)",
-      "Bash(scp:*)"
+      "Bash(scp:*)",
+      "Bash(ssh:*)"
     ],
     "deny": [],
     "ask": []
