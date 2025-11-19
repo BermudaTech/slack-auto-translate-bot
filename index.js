@@ -661,6 +661,24 @@ app.error((error) => {
         for (const [userId, settings] of userSettings) {
             console.log(`  - User ${userId}: ${settings.enabled ? 'ON' : 'OFF'}, target: ${settings.targetLanguage}`);
         }
+
+        // Add Socket Mode connection event handlers for better disconnect monitoring
+        if (app.receiver && app.receiver.client) {
+            const socketModeClient = app.receiver.client;
+
+            socketModeClient.on('disconnect', (reason) => {
+                console.warn(`⚠️  WebSocket disconnected: ${reason || 'Unknown reason'}`);
+                console.warn(`   Timestamp: ${new Date().toISOString()}`);
+            });
+
+            socketModeClient.on('unable_to_socket_mode_start', (error) => {
+                console.error('❌ Failed to start Socket Mode:', error);
+            });
+
+            console.log('✅ WebSocket event handlers registered');
+        } else {
+            console.warn('⚠️  Unable to register WebSocket event handlers - Socket Mode client not found');
+        }
     } catch (error) {
         console.error('Failed to start app:', error);
         process.exit(1);
