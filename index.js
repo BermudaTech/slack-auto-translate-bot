@@ -19,6 +19,19 @@ const translateService = new TranslateService(process.env.TRANSLATE_API_KEY);
 const fs = require('fs');
 const path = require('path');
 
+// Connection monitoring variables
+let connectionState = {
+    isConnected: false,
+    lastHeartbeat: Date.now(),
+    reconnectAttempts: 0,
+    lastDisconnectTime: null,
+    consecutiveFailures: 0
+};
+
+const CONNECTION_CHECK_INTERVAL = 30000; // Check every 30 seconds
+const MAX_CONSECUTIVE_FAILURES = 3;
+const RECONNECT_DELAY = 5000; // 5 seconds
+
 const configPath = path.join(__dirname, 'config.json');
 
 // Load settings from config file
@@ -662,20 +675,122 @@ app.error((error) => {
             console.log(`  - User ${userId}: ${settings.enabled ? 'ON' : 'OFF'}, target: ${settings.targetLanguage}`);
         }
 
-        // Add Socket Mode connection event handlers for better disconnect monitoring
+        // Add Socket Mode connection event handlers and monitoring
         if (app.receiver && app.receiver.client) {
             const socketModeClient = app.receiver.client;
 
+            // Track connection state
             socketModeClient.on('disconnect', (reason) => {
+                connectionState.isConnected = false;
+                connectionState.lastDisconnectTime = Date.now();
+                connectionState.consecutiveFailures++;
                 console.warn(`⚠️  WebSocket disconnected: ${reason || 'Unknown reason'}`);
                 console.warn(`   Timestamp: ${new Date().toISOString()}`);
+                console.warn(`   Consecutive failures: ${connectionState.consecutiveFailures}`);
+            });
+
+            socketModeClient.on('ready', () => {
+                connectionState.isConnected = true;
+                connectionState.lastHeartbeat = Date.now();
+                connectionState.consecutiveFailures = 0;
+                console.log('✅ WebSocket connected and ready');
             });
 
             socketModeClient.on('unable_to_socket_mode_start', (error) => {
+                connectionState.isConnected = false;
                 console.error('❌ Failed to start Socket Mode:', error);
             });
 
             console.log('✅ WebSocket event handlers registered');
+
+            // Health check function
+            async function checkConnectionHealth() {
+                try {
+                    // Check if socket is connected
+                    const timeSinceLastHeartbeat = Date.now() - connectionState.lastHeartbeat;
+
+                    if (!connectionState.isConnected || timeSinceLastHeartbeat > CONNECTION_CHECK_INTERVAL * 2) {
+                        console.warn(`⚠️  Connection health check failed`);
+                        console.warn(`   isConnected: ${connectionState.isConnected}`);
+                        console.warn(`   Time since last heartbeat: ${timeSinceLastHeartbeat}ms`);
+
+                        // Try a simple API call to verify connection
+                        try {
+                            await app.client.auth.test();
+                            connectionState.lastHeartbeat = Date.now();
+                            connectionState.isConnected = true;
+                            console.log('✅ API test successful - connection healthy');
+                        } catch (apiError) {
+                            console.error('❌ API test failed:', apiError.message);
+                            connectionState.consecutiveFailures++;
+
+                            // Trigger reconnection if too many failures
+                            if (connectionState.consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+                                console.error(`🔄 Too many consecutive failures (${connectionState.consecutiveFailures}), attempting reconnect...`);
+                                await attemptReconnect();
+                            }
+                        }
+                    } else {
+                        // Connection appears healthy, update heartbeat
+                        connectionState.lastHeartbeat = Date.now();
+                        console.log(`💓 Connection health check OK (${new Date().toISOString()})`);
+                    }
+                } catch (error) {
+                    console.error('❌ Health check error:', error);
+                }
+            }
+
+            // Reconnection function
+            async function attemptReconnect() {
+                if (connectionState.reconnectAttempts > 0) {
+                    console.warn('⏳ Reconnection already in progress, skipping...');
+                    return;
+                }
+
+                connectionState.reconnectAttempts++;
+                console.log(`🔄 Attempting reconnection (attempt ${connectionState.reconnectAttempts})...`);
+
+                try {
+                    // Try to stop and restart the socket mode client
+                    if (socketModeClient.disconnect) {
+                        await socketModeClient.disconnect();
+                        console.log('   Disconnected from Socket Mode');
+                    }
+
+                    await new Promise(resolve => setTimeout(resolve, RECONNECT_DELAY));
+
+                    if (socketModeClient.start) {
+                        await socketModeClient.start();
+                        console.log('✅ Reconnection successful');
+                        connectionState.consecutiveFailures = 0;
+                    } else {
+                        // If we can't restart socket client, restart the whole app
+                        console.error('❌ Cannot restart socket client, restarting app...');
+                        process.exit(1); // PM2 will restart the app
+                    }
+                } catch (error) {
+                    console.error('❌ Reconnection failed:', error);
+
+                    // If reconnection fails multiple times, force restart
+                    if (connectionState.reconnectAttempts >= 3) {
+                        console.error('❌ Multiple reconnection attempts failed, restarting app...');
+                        process.exit(1); // PM2 will restart the app
+                    }
+                } finally {
+                    connectionState.reconnectAttempts = 0;
+                }
+            }
+
+            // Start health monitoring
+            const healthCheckInterval = setInterval(checkConnectionHealth, CONNECTION_CHECK_INTERVAL);
+            console.log(`💓 Connection health monitor started (checking every ${CONNECTION_CHECK_INTERVAL / 1000}s)`);
+
+            // Ensure cleanup on process exit
+            process.on('SIGTERM', () => {
+                clearInterval(healthCheckInterval);
+                console.log('Health monitor stopped');
+            });
+
         } else {
             console.warn('⚠️  Unable to register WebSocket event handlers - Socket Mode client not found');
         }
